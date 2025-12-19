@@ -1,0 +1,180 @@
+---
+title: "Informe Técnico: Sistema de Inteligencia de Negocios 'Superstore'"
+author: "Catalina Riffo & Diego Campuzano"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = 'center')
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(scales)
+library(knitr)
+library(kableExtra)
+```
+
+# Introducción y Acceso al Dashboard
+
+Este informe documenta el desarrollo de una solución de Inteligencia de Negocios (BI) diseñada para analizar las ventas de la empresa minorista "Superstore". El proyecto abarca desde la extracción y limpieza de datos (ETL) hasta la implementación de modelos predictivos y visualización interactiva.
+
+### Acceso al Producto Final
+
+El Dashboard interactivo desplegado en la nube se encuentra disponible en el siguiente enlace:
+
+**[Haga clic aquí para abrir el Dashboard Interactivo](https://019b3506-a9af-0d86-2014-f35e6b94a68a.share.connect.posit.cloud/)**
+
+---
+
+# Obtención y Limpieza de Datos (ETL)
+
+Para este proyecto se utilizó el dataset público **"Superstore Sales"** (Fuente: Kaggle), que contiene registros transaccionales de ventas retail en Estados Unidos.
+
+## Extracción y Staging
+A continuación, se detalla el código utilizado para la carga y la limpieza inicial de los datos (Staging). Se aplicaron técnicas de normalización de nombres y conversión de tipos de datos.
+
+```{r carga_datos}
+# Carga del dataset (Ruta relativa)
+# Nota: Se asume que el archivo está en la carpeta 'data/'
+# Si no encuentra el archivo, genera un dataframe vacio para evitar error al compilar
+if(file.exists("data/train.csv")) {
+  df_raw <- read_csv("data/train.csv", show_col_types = FALSE)
+} else {
+  stop("El archivo train.csv no se encuentra en la carpeta data/")
+}
+
+# Proceso de Limpieza (Staging)
+df_staging <- df_raw %>%
+  clean_names() %>% # Normalización a snake_case
+  mutate(
+    # Creación de Clave Sustituta
+    transaccion_key = row_number(),
+    # Corrección de formatos de fecha
+    order_date = dmy(order_date),
+    ship_date = dmy(ship_date),
+    # Aseguramiento de tipos numéricos
+    sales = as.numeric(sales)
+  ) %>%
+  # Eliminación de registros nulos críticos
+  filter(!is.na(sales), !is.na(order_date))
+
+glimpse(df_staging)
+```
+
+---
+
+# Arquitectura de Datos (Data Warehouse)
+
+Para optimizar el análisis, se diseñó un modelo lógico basado en un **Esquema en Estrella (Star Schema)**.
+
+## Diseño Dimensional
+El modelo consta de una tabla de hechos central y cuatro dimensiones clave:
+
+* **FACT_VENTAS:** Contiene las métricas (Sales) y claves foráneas.
+* **DIM_TIEMPO:** Jerarquía temporal (Año, Mes, Día).
+* **DIM_UBICACION:** Jerarquía geográfica (Región, Estado, Ciudad).
+* **DIM_PRODUCTO:** Jerarquía de catálogo (Categoría, Subcategoría).
+* **DIM_CLIENTE:** Segmentación de clientes.
+
+## Generación del Data Mart
+Para alimentar el Dashboard con alta eficiencia, se generó una vista desnormalizada (Data Mart) que integra las dimensiones:
+
+```{r data_mart}
+# Creación del Data Mart analítico
+df_mart <- df_staging %>%
+  mutate(
+    anio = year(order_date),
+    mes = month(order_date, label = TRUE, abbr = TRUE),
+    dia_semana = wday(order_date, label = TRUE)
+  )
+
+# Vista previa de las primeras 5 filas
+head(df_mart) %>% 
+  select(order_date, category, region, sales, anio) %>% 
+  kable() %>% 
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+---
+
+# Analítica de Negocio (Descriptiva)
+
+A continuación se presentan visualizaciones estáticas generadas a partir del Data Mart.
+
+## Tendencia de Ventas
+Análisis de la evolución de ingresos a lo largo del tiempo.
+
+```{r plot_tendencia, fig.height=4}
+df_mart %>%
+  group_by(mes_anio = floor_date(order_date, "month")) %>%
+  summarise(ventas = sum(sales)) %>%
+  ggplot(aes(x = mes_anio, y = ventas)) +
+  geom_line(color = "#2c3e50", size = 1) +
+  geom_smooth(method = "loess", color = "blue", fill = "lightblue", alpha = 0.2) +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "Evolución Mensual de Ventas", x = "Fecha", y = "Ingresos ($)") +
+  theme_minimal()
+```
+
+## Desempeño por Categoría
+Identificación de los productos con mayor volumen de facturación.
+
+```{r plot_categorias, fig.height=4}
+df_mart %>%
+  group_by(sub_category) %>%
+  summarise(total = sum(sales)) %>%
+  arrange(desc(total)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(sub_category, total), y = total)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous(labels = dollar_format()) +
+  labs(title = "Top 10 Sub-Categorías por Ventas", x = "", y = "Total Vendido") +
+  theme_light()
+```
+
+---
+
+# Inferencia Estadística y Modelado
+
+Para cumplir con los requisitos de análisis avanzado, se aplicaron pruebas estadísticas de hipótesis y modelos de regresión.
+
+## Análisis de Varianza (ANOVA)
+**Hipótesis:** Se desea comprobar si existe una diferencia significativa en el promedio de ventas entre las distintas regiones geográficas.
+
+* $H_0$: Las medias de ventas son iguales en todas las regiones.
+* $H_1$: Al menos una región tiene un promedio de ventas diferente.
+
+```{r anova_test}
+anova_res <- aov(sales ~ region, data = df_mart)
+summary(anova_res)
+```
+
+**Interpretación:**
+Observando el valor `Pr(>F)` del resultado anterior: si este valor es menor a 0.05, rechazamos la hipótesis nula, concluyendo que la **Región** es un factor determinante en el monto de la venta.
+
+## Modelo Predictivo (Regresión Lineal)
+Se entrenó un modelo de regresión lineal múltiple para estimar el valor de una venta futura basándose en sus características.
+
+**Fórmula del Modelo:** `Sales ~ Category + Region + Segment`
+
+```{r regresion_lineal}
+modelo_lm <- lm(sales ~ category + region + segment, data = df_mart)
+summary(modelo_lm)
+```
+
+**Conclusión del Modelo:**
+Los coeficientes (Estimate) nos indican cuánto aumenta o disminuye el valor esperado de la venta según la categoría o región. Este modelo es el motor que impulsa el "Simulador de Precios" en la Pestaña 3 del Dashboard.
+
+---
+
+# Conclusiones Generales
+
+1.  **Integración Tecnológica:** Se logró implementar exitosamente un flujo completo en R, desde la ingesta de datos crudos hasta el despliegue en la nube (Posit Connect).
+2.  **Valor del Negocio:** El Dashboard permite a los gerentes monitorear KPIs en tiempo real (Ventas totales, Ticket promedio) sin depender de reportes estáticos mensuales.
+3.  **Hallazgos Estadísticos:** A través del ANOVA y la Regresión, se identificaron diferencias significativas en el comportamiento de ventas por región y categoría, permitiendo enfocar estrategias de marketing diferenciadas.
+4.  **Accesibilidad:** La solución está disponible públicamente, facilitando el acceso a la información desde cualquier dispositivo con conexión a internet.

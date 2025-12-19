@@ -66,7 +66,7 @@ df_mart <- df_staging %>%
 set.seed(123)
 modelo_lm <- lm(sales ~ category + region + segment, data = df_mart)
 
-# ANOVA (Para cumplir con la rúbrica de inferencia)
+# ANOVA
 anova_region <- aov(sales ~ region, data = df_mart)
 
 # Funciones de Predicción
@@ -162,7 +162,7 @@ ui <- page_navbar(
                       p("Basado en modelo lineal histórico.")
                   )
         ),
-        nav_panel("Inferencia Estadística (Rúbrica)", 
+        nav_panel("Inferencia Estadística", 
                   h5("Análisis de Varianza (ANOVA)"),
                   p("Hipótesis: ¿Existe diferencia significativa en las ventas medias entre regiones?"),
                   verbatimTextOutput("stats_anova"),
@@ -267,7 +267,7 @@ server <- function(input, output, session) {
     dollar(prediccion())
   })
   
-  # Reportes Estadísticos (Para Rubrica Punto 2)
+  # Reportes Estadísticos
   output$stats_anova <- renderPrint({
     print(summary(anova_region))
     cat("\nINTERPRETACIÓN:\nSi Pr(>F) es < 0.05, hay diferencias significativas de ventas entre regiones.")
